@@ -1,0 +1,7 @@
+# model weights are not part of this repository (see submission/weights_delta/README.md)
+*.safetensors
+submission/weights_delta/*
+!submission/weights_delta/README.md
+__pycache__/
+*.pyc
+.DS_Store

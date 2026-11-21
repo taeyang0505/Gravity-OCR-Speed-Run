@@ -1,0 +1,43 @@
+{
+  "vocab_size": {
+    "total": 59283
+  },
+  "table": {
+    "size": 16384,
+    "tiers": {
+      "must": 4292,
+      "domain": 902,
+      "cjk": 1024,
+      "words": 10166,
+      "ascii": 0,
+      "rest": 0
+    },
+    "file": "core_table_ids.npy"
+  },
+  "text": {
+    "size": 16384,
+    "tiers": {
+      "must": 4292,
+      "domain": 1064,
+      "cjk": 1024,
+      "words": 10004,
+      "ascii": 0,
+      "rest": 0
+    },
+    "file": "core_text_ids.npy"
+  },
+  "formula": {
+    "size": 8192,
+    "tiers": {
+      "must": 1773,
+      "formula_domain": 199,
+      "ascii_punct": 765,
+      "ascii_caps": 1594,
+      "ascii_words": 3861,
+      "hangul": 0,
+      "ascii_rest": 0,
+      "rest": 0
+    },
+    "file": "core_formula_ids.npy"
+  }
+}
