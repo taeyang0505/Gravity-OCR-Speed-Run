@@ -11,7 +11,7 @@ GravityOCR-KO로 크롭 402장(텍스트 210, 표 62, 수식 130)을 L40S 한 �
 
 품질 합격선: 텍스트 ≥ 96.24, 수식 ≥ 94.88, 표 ≥ 97.50 (기준 모델 점수 − 1점).
 
-## 무엇을 바꿨나
+## 변경 사항
 
 출발점은 1등 팀의 제출본 v17입니다(Apache 2.0). 그 위에 아래 항목을 얹었고, 모두 기본값은 꺼짐이며 `submission/TY_SETTINGS`에서 켭니다.
 
@@ -34,7 +34,7 @@ GravityOCR-KO로 크롭 402장(텍스트 210, 표 62, 수식 130)을 L40S 한 �
 
 왜 이 순서로 효과가 났는지, 효과가 없던 시도까지는 [docs/ANALYSIS.md](docs/ANALYSIS.md)에 정리했습니다.
 
-## 폴더
+## 디렉터리 구조
 
 ```
 submission/   제출 zip의 내용 (가중치 제외). team.yaml -> ty_launch.py -> TY_SETTINGS를 읽고 serve.py 실행
@@ -45,7 +45,7 @@ results/      각 실험의 설정과 시간(timing.json), 품질(scores.json) �
 docs/         분석 문서
 ```
 
-## 다시 만들기
+## 재현 방법
 
 1. 대회 이미지 `track2-base:v1`(스타터 키트의 `track2-base/Dockerfile`)이 있는 L40S(드라이버 570)에서,
    1등 팀 저장소의 빌드 순서(`tools/build_kernels.py`, `tools/build_draft_attn.py`, `tools/build_overlay.py`)로 v17 팀 폴더를 만듭니다.
@@ -56,7 +56,7 @@ docs/         분석 문서
 가중치는 이 저장소에 없습니다. `submission/weights_delta/README.md`를 보세요. 가중치 파일이 없으면 서버는 이미지의
 기본 GravityOCR-KO 가중치로 그대로 돌아갑니다(측정상 약 3% 느림).
 
-## 출처와 라이선스
+## 라이선스
 
 서빙 스택, 커널, 전처리는 1등 팀의 v17 제출본 [sungu-che/minion @ c0f921e](https://github.com/sungu-che/minion/tree/c0f921ef6829f6a957047c30332c48298cb4aa75)
 (Apache License 2.0)에서 왔고, 바꾼 내용은 [NOTICE.md](submission/NOTICE.md)에 적었습니다. SGLang overlay 파일의 저작권 표시는
