@@ -38,3 +38,4 @@ Changes by team taktak (2026-11-22), all default-off switches turned on in `TY_S
 10. `TY_SETTINGS`: table glyph-height target 10 px (was 11).
 11. `TY_SETTINGS`: the table lane runs its ViT prefetch stream at priority -10 (inside its below-normal MPS client), so
     table images are encoded ahead of the table decode rounds.
+12. `TY_SETTINGS`: the text and formula lane packs ViT prefetch batches of at most 8192 patches (was 16384).
