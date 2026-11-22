@@ -83,10 +83,108 @@ LANES = [[t.strip() for t in part.split(",") if t.strip()]
          for part in os.environ.get("TRACK2_LANES", "").split(";") if part.strip()]
 LANE_PORT_STEP = int(os.environ.get("TRACK2_LANE_PORT_STEP", "100"))
 LANE_MPS = os.environ.get("TRACK2_LANE_MPS", "1") == "1"
+# team taktak (2026-11-22): start the lane servers one after the other (patch_minion_lanes_seq.py)
+LANE_SEQUENTIAL = os.environ.get("TRACK2_LANE_SEQUENTIAL", "1") == "1"
 _LANE_KEYS = {"DRAFT": "DRAFT", "MAXREQ": "MAXREQ", "GRAPHBS": "GRAPHBS", "MEMFRAC": "MEMFRAC",
               "MM_WORKERS": "TRACK2_MM_WORKERS", "VIT_PF_PATCHES": "TRACK2_VIT_PF_PATCHES",
               "MPS_PRIO": "CUDA_MPS_CLIENT_PRIORITY", "MPS_SM_PCT": "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"}
 _MPS_ENV: dict = {}
+# team taktak (2026-11-22): TRACK2_TABLE_SPLIT, see taeyang/track2/minion_port/patch_minion_table_split.py
+TABLE_SPLIT = int(os.environ.get("TRACK2_TABLE_SPLIT", "0") or 0)
+TABLE_SPLIT_MINH = int(os.environ.get("TRACK2_TABLE_SPLIT_MINH", "200") or 200)
+TABLE_SPLIT_RULE = float(os.environ.get("TRACK2_TABLE_SPLIT_RULE", "0.95") or 0.95)
+TEXT_SPLIT = int(os.environ.get("TRACK2_TEXT_SPLIT", "0") or 0)          # team taktak (patch_minion_text_split.py)
+TEXT_SPLIT_MINLINES = int(os.environ.get("TRACK2_TEXT_SPLIT_MINLINES", "5") or 5)
+
+
+def _split_text(p: dict):
+    """two half-crop requests cut at a blank gap between text lines near the middle, or None"""
+    import numpy as np
+    path = p.get("img_path")
+    if not path:
+        return None
+    with Image.open(path) as im:
+        rgb = im.convert("RGB")
+    g = np.asarray(rgb.convert("L")).astype(np.int16)
+    H, W = g.shape
+    ink = (np.abs(g - int(np.median(g))) > 60).any(axis=1)
+    d = np.diff(np.concatenate([[1], ink.astype(np.int8), [1]]))
+    st, en = np.flatnonzero(d == -1), np.flatnonzero(d == 1)          # blank runs [st, en)
+    gaps = [(a, b) for a, b in zip(st, en) if a > 0 and b < H and b - a >= 2]
+    if len(gaps) + 1 < TEXT_SPLIT_MINLINES:
+        return None
+    mid = [(a + b) // 2 for a, b in gaps if 0.3 * H <= (a + b) / 2.0 <= 0.7 * H]
+    if not mid:
+        return None
+    y = int(min(mid, key=lambda v: abs(v - H / 2.0)))
+    out = []
+    for k, (a, b) in enumerate(((0, y), (y, H))):
+        fn = SHM_DIR / f"xs_{abs(hash(p['id'])) % 10**12}_{k}.png"
+        rgb.crop((0, a, W, b)).save(fn, compress_level=1)
+        q = dict(p)
+        q.update(id=f"{p['id']}#xs{k}", image_url="file://" + str(fn), h=b - a, _split_of=p["id"])
+        out.append(q)
+    return out
+_SPLIT_POOL = None
+
+
+def _split_pool():
+    global _SPLIT_POOL
+    if _SPLIT_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _SPLIT_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="t2split")
+    return _SPLIT_POOL
+
+
+def _split_table(p: dict):
+    """two half-table requests cut at a full-width rule near the middle, or None"""
+    import numpy as np
+    path = p.get("img_path")
+    if not path:
+        return None
+    with Image.open(path) as im:
+        rgb = im.convert("RGB")
+    g = np.asarray(rgb.convert("L")).astype(np.int16)
+    H, W = g.shape
+    if H < TABLE_SPLIT_MINH:
+        return None
+    # rule rows: off the background colour (light grey lines count) across the table's whole width, in runs of
+    # at most 3 px (a filled row band, e.g. zebra striping or a coloured header, holds text and is never cut)
+    ink = np.abs(g - int(np.median(g))) > 8
+    cols = np.flatnonzero(ink.any(axis=0))
+    if cols.size < 2:
+        return None
+    full = ink[:, int(cols[0]):int(cols[-1]) + 1].mean(axis=1) >= TABLE_SPLIT_RULE
+    d = np.diff(np.concatenate([[0], full.astype(np.int8), [0]]))
+    st, en = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+    thin = [(a + b - 1) // 2 for a, b in zip(st, en) if b - a <= 3]
+    mid = [y for y in thin if 0.3 * H <= y <= 0.7 * H]
+    if not mid:
+        return None
+    y = int(min(mid, key=lambda v: abs(v - H / 2.0)))
+    out = []
+    for k, (a, b) in enumerate(((0, min(H, y + 2)), (max(0, y - 1), H))):
+        fn = SHM_DIR / f"ts_{abs(hash(p['id'])) % 10**12}_{k}.png"
+        rgb.crop((0, a, W, b)).save(fn, compress_level=1)
+        q = dict(p)
+        q.update(id=f"{p['id']}#ts{k}", image_url="file://" + str(fn), h=b - a, _split_of=p["id"])
+        out.append(q)
+    return out
+
+
+def _merge_table_html(parts: list) -> str:
+    """rows of the top part, then rows of the bottom part, in one <table>"""
+    if not parts:
+        return ""
+    out = parts[0].rstrip()
+    for nxt in parts[1:]:
+        a = re.sub(r"(</tbody>)?\s*</table>\s*$", "", out)
+        b = re.sub(r"^\s*<table[^>]*>\s*(<tbody>)?", "", nxt.strip())
+        if a == out or b == nxt.strip():       # not two tables: keep both texts
+            out = out + nxt
+        else:
+            out = a + b
+    return out
 _SGLANG_PY = None
 
 
@@ -99,6 +197,10 @@ def lane_of_task(task: str) -> int:
 
 def lane_env(j: int) -> dict:
     out = {}
+    pre = f"TRACK2_LANE{j}_"   # team taktak: TRACK2_LANE<j>_<VAR>=value sets VAR for lane j only (patch_minion_lanes_env.py)
+    for k, v in os.environ.items():
+        if k.startswith(pre) and len(k) > len(pre):
+            out[k[len(pre):]] = v
     for k, var in _LANE_KEYS.items():
         vals = [v.strip() for v in os.environ.get(f"TRACK2_LANE_{k}", "").split(",")]
         if j < len(vals) and vals[j]:
@@ -632,6 +734,7 @@ def prepare_job_items(items: list[dict[str, Any]], folder: Path, mode: str) -> l
             "pred2": predict_rounds_v2(task_key, w, h, nbytes),
             "prompt": prompt_str,
             "image_url": image_url,
+            "img_path": str(img_path),   # team taktak: TRACK2_TABLE_SPLIT reads the pixels of a few tables
         })
     if STAGE >= 1:
         prepared = order_items(prepared, ORDER)
@@ -717,20 +820,65 @@ async def run_manifest_async(
     global _JOB_NO
     _JOB_NO += 1
     lane_rank = [0] * max(1, len(LANES))
+    # team taktak: TRACK2_TABLE_SPLIT -- the chosen tables are split on worker threads from here on; ranks are spaced by
+    # 2 so that both halves keep the original crop's place in the scheduler's queue
+    step = 2 if (TABLE_SPLIT > 0 or TEXT_SPLIT > 0) else 1
+    split_futs = {}
+    if TEXT_SPLIT > 0:   # team taktak: TRACK2_TEXT_SPLIT (patch_minion_text_split.py)
+        _texts = sorted((q for q in scheduled if q["task_key"] == "text"), key=lambda q: -q.get("pred2", 0.0))[:TEXT_SPLIT]
+        _loop = asyncio.get_running_loop()
+        for q in _texts:
+            split_futs[id(q)] = _loop.run_in_executor(_split_pool(), _split_text, q)
+    if TABLE_SPLIT > 0:
+        tabs = sorted((q for q in scheduled if q["task_key"] == "table" and q.get("h", 0) >= TABLE_SPLIT_MINH),
+                      key=lambda q: -q.get("pred2", 0.0))[:TABLE_SPLIT]
+        _loop = asyncio.get_running_loop()
+        for q in tabs:
+            split_futs[id(q)] = _loop.run_in_executor(_split_pool(), _split_table, q)
+    split_of = {}
     for i, p in enumerate(scheduled):
         # rank in the request id: the scheduler keeps its waiting queue (and the ViT prefetch queue) in this order,
         # whatever order the tokenizer manager finishes the requests in (gravity_ocr/vit_prefetch.py)
         if LANES:   # team taktak: rank within the crop's lane, lane at the end of the rid (LanePools routes on it)
             j = lane_of_task(p["task_key"])
-            p["rid"] = f"t2r{lane_rank[j]:05d}j{_JOB_NO}l{j}"
-            lane_rank[j] += 1
+            r = lane_rank[j]
+            lane_rank[j] += step
+            mk = (lambda rr, j=j: f"t2r{rr:05d}j{_JOB_NO}l{j}")
         else:
-            p["rid"] = f"t2r{i:05d}j{_JOB_NO}"
-        tasks.append(asyncio.ensure_future(one(p)))
+            r = i * step
+            mk = (lambda rr: f"t2r{rr:05d}j{_JOB_NO}")
+        parts = None
+        if id(p) in split_futs:
+            try:
+                parts = await split_futs[id(p)]
+            except Exception as e:
+                log(f"table split of {p['id']} failed: {e!r}")
+        if parts:
+            for k, q in enumerate(parts):
+                q["rid"] = mk(r + k)
+                split_of[q["id"]] = p["id"]
+                tasks.append(asyncio.ensure_future(one(q)))
+        else:
+            p["rid"] = mk(r)
+            tasks.append(asyncio.ensure_future(one(p)))
         if SEND_GAP_S > 0 and i + 1 >= first and (i + 1 - first) % SEND_WAVE == 0 and i + 1 < len(scheduled):
             await asyncio.sleep(SEND_GAP_S)
     pairs = await asyncio.gather(*tasks)
     results_map = dict(pairs)
+    if split_of:   # team taktak: join the halves back into one table
+        halves = {}
+        for hid, cid in split_of.items():
+            halves.setdefault(cid, []).append(hid)
+        for cid, hids in halves.items():
+            _parts = [results_map.pop(h, "") for h in sorted(hids)]
+            if any("#xs" in h for h in hids):   # text halves: one paragraph
+                results_map[cid] = " ".join(x.strip() for x in _parts if x.strip())
+            else:
+                results_map[cid] = _merge_table_html(_parts)
+            ts = [t_send[h] for h in hids if h in t_send]
+            td = [t_done[h] for h in hids if h in t_done]
+            if ts and td:   # the client log shows the crop as finished when its last half finished
+                t_send[cid], t_done[cid] = min(ts), max(td)
     t_infer = time.perf_counter()
     if prof_dir:
         try:
@@ -903,7 +1051,12 @@ def main() -> None:
     if LANES:   # team taktak: one server per lane, all on this GPU
         if LANE_MPS:
             start_mps()
-        servers = [start_server(j) for j in range(len(LANES))]
+        servers = []
+        for j in range(len(LANES)):
+            servers.append(start_server(j))
+            if LANE_SEQUENTIAL and j < len(LANES) - 1:   # this lane's KV pool is sized before the next one starts
+                wait_ready(servers[-1], url=f"http://127.0.0.1:{lane_ports()[j]}")
+                log(f"lane {j} ready; starting lane {j + 1}")
     else:
         servers = [start_server()]
 

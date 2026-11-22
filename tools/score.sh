@@ -11,10 +11,11 @@ python3 - "$base" "$w" <<'PY'
 import glob, json, os, shutil, sys
 base, w = sys.argv[1], sys.argv[2]
 walls = []
-for i, d in enumerate(sorted(glob.glob(base + "/r*/")), 1):
+runs = [d for d in sorted(glob.glob(base + "/r*/")) if os.path.exists(d + "predictions_1.jsonl")]   # failed runs left out
+for i, d in enumerate(runs, 1):
     shutil.copy(d + "predictions_1.jsonl", f"{w}/res/predictions_test_{i}.jsonl")
     walls.append(json.load(open(d + "timing.json"))["walls"][0])
-shutil.copy(sorted(glob.glob(base + "/r*/"))[0] + "predictions_1.jsonl", f"{w}/res/predictions_dev.jsonl")
+shutil.copy(runs[0] + "predictions_1.jsonl", f"{w}/res/predictions_dev.jsonl")
 med = sorted(walls)[len(walls) // 2]
 json.dump({"wall_time": med, "wall_times": walls, "test_runs": len(walls), "dev_wall_time": walls[0]}, open(f"{w}/res/metadata.json", "w"))
 # DEVSET=<dir>: score against that crop set's targets (a subset of dev made by make_subsets.py); default ~/dev-set

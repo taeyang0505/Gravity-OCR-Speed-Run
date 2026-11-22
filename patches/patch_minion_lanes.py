@@ -29,6 +29,9 @@ import os
 import sys
 
 team = sys.argv[1]
+if "lane_of_task" in open(os.path.join(team, "serve.py")).read():
+    print("already patched", team)
+    sys.exit(0)
 
 
 def patch(path, pairs):

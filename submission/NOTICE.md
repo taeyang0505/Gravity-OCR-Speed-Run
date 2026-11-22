@@ -30,3 +30,11 @@ Changes by team taktak (2026-11-22), all default-off switches turned on in `TY_S
 7. `serve.py`: TRACK2_GLYPH_MIN_PATCHES=256 (their switch) and LANES: two SGLang servers on the GPU under CUDA MPS,
    tables (draft 33, below-normal MPS priority) and text + formula (draft 13); per-lane shm ring path
    (TRACK2_SHM_RING_PATH in the glm4v processor and glm_ocr.py).
+8. `serve.py`: the lane servers start one after the other (TRACK2_LANE_SEQUENTIAL, default on with LANES), so that their
+   KV pools are sized without racing for GPU memory; per-lane environment (TRACK2_LANE<j>_<VAR>); optional splitting of
+   the longest tables at a full-width rule and of the longest text crops at a gap between lines into two requests whose
+   outputs are joined (TRACK2_TABLE_SPLIT, TRACK2_TEXT_SPLIT, off unless set in TY_SETTINGS).
+9. `TY_SETTINGS`: text-lane draft length 11 (was 13) and up to 200 running requests (was 160); lane memory fractions 0.36 / 0.55 for the sequential start.
+10. `TY_SETTINGS`: table glyph-height target 10 px (was 11).
+11. `TY_SETTINGS`: the table lane runs its ViT prefetch stream at priority -10 (inside its below-normal MPS client), so
+    table images are encoded ahead of the table decode rounds.
